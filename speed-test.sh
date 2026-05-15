@@ -1,34 +1,40 @@
 #!/bin/sh
 
-URLS="
-https://ash-speed.hetzner.com/100MB.bin
-http://cachefly.cachefly.net/100mb.test
-"
+URLS="${*:-http://cachefly.cachefly.net/100mb.test}"
+
+human_rate() {
+    bps="$1"
+    awk -v bps="$bps" 'BEGIN {
+        if (bps >= 1000000) printf "%.2f Mbps", bps / 1000000;
+        else if (bps >= 1000) printf "%.2f Kbps", bps / 1000;
+        else printf "%.0f bps", bps;
+    }'
+}
 
 for url in $URLS; do
     echo "Testing: $url"
+    tmpfile="/tmp/curl_speedtest_$$.tmp"
+    trap 'rm -f "$tmpfile"' EXIT INT TERM
 
-    start=$(date +%s)
-    out=$(wget -O /dev/null "$url" 2>&1)
-    end=$(date +%s)
+    curl -L -o /dev/null --progress-bar "$url" 2>"$tmpfile"
+    rc=$?
 
-    secs=$((end - start))
-    [ "$secs" -le 0 ] && secs=1
-
-    size=$(echo "$out" | awk '
-        /Length:/ {
-            gsub(/[(),]/,"",$2);
-            print $2;
-            exit
-        }')
-
-    if [ -n "$size" ]; then
-        mbps=$(awk -v bytes="$size" -v secs="$secs" 'BEGIN { printf "%.2f", (bytes * 8) / secs / 1000000 }')
-        echo "Time: ${secs}s  Speed: ${mbps} Mbps"
-    else
-        echo "Could not parse file size; raw wget output follows:"
-        echo "$out"
+    if [ $rc -ne 0 ]; then
+        echo "curl failed with exit code $rc"
+        cat "$tmpfile"
+        rm -f "$tmpfile"
+        continue
     fi
 
+    summary=$(tail -n 1 "$tmpfile")
+    rm -f "$tmpfile"
+
+    size=$(echo "$summary" | awk '{print $(NF-2)}')
+    speed=$(echo "$summary" | awk '{print $NF}')
+
     echo
+    echo "Final transfer summary: $summary"
+    echo "Average speed: $speed"
+    echo
+
 done
